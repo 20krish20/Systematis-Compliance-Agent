@@ -1,8 +1,6 @@
 # Systematic Compliance Agent
 ## Multi-Agent Fintech AI Pipeline
 
-> **R&D Competition | Senior AI Engineer | Agentic AI Systems Track**
-
 A production-grade, multi-agent AI system that autonomously classifies, routes, investigates, and resolves consumer financial complaints at scale — with full explainability for regulatory audit trails.
 
 ---
@@ -14,12 +12,12 @@ Consumer Complaint
        │
        ▼
 ┌─────────────┐
-│ Intake Agent │  PII masking (spaCy NER + regex), deduplication (SHA-256), normalization
+│ Intake Agent│  PII masking (spaCy NER + regex), deduplication (SHA-256), normalization
 └──────┬──────┘
        │
        ▼
 ┌──────────────────┐
-│ Classifier Agent  │  DistilBERT (product/issue) + Claude LLM (severity/compliance risk)
+│ Classifier Agent │  DistilBERT (product/issue) + Claude LLM (severity/compliance risk)
 │                  │  ChromaDB few-shot retrieval · SHAP feature attribution
 └──────┬───────────┘
        │
@@ -27,31 +25,31 @@ Consumer Complaint
        │
        ▼
 ┌────────────────────┐
-│ Root Cause Agent    │  HDBSCAN semantic clustering · Z-score anomaly detection
+│ Root Cause Agent   │  HDBSCAN semantic clustering · Z-score anomaly detection
 │                    │  LLM causal chain generation (structured JSON)
 └──────┬─────────────┘
        │
        ▼
 ┌──────────────┐
-│ Routing Agent │  Rule-based fast path + LLM fallback · Priority scoring
+│ Routing Agent│  Rule-based fast path + LLM fallback · Priority scoring
 │              │  Mock Jira/ServiceNow ticket creation · SLA deadline assignment
 └──────┬───────┘
        │
        ▼
 ┌────────────────────┐
-│ Resolution Agent    │  ReAct + RAG over regulatory corpus (Reg E/Z, FCRA, ECOA)
+│ Resolution Agent   │  ReAct + RAG over regulatory corpus (Reg E/Z, FCRA, ECOA)
 │                    │  Customer response draft · Preventive recommendations
 └──────┬─────────────┘
        │
        ▼
 ┌────────────────────────┐
-│ Regulatory Review Agent │  LLM-as-judge (5-dimension rubric · 0-100 score)
+│ Regulatory Review Agent│  LLM-as-judge (5-dimension rubric · 0-100 score)
 │                        │  Score < 80 → return to Resolution Agent (max 2 revisions)
 └──────┬─────────────────┘
        │
        ▼
 ┌────────────────────────┐
-│ Audit & Explainability  │  Full decision trace · SHAP attributions · Regulatory citations
+│ Audit & Explainability │  Full decision trace · SHAP attributions · Regulatory citations
 │ Agent                  │  Fairness metrics (Gini, disparate impact, equalized odds)
 │                        │  PostgreSQL persistence · LangSmith tracing
 └────────────────────────┘
