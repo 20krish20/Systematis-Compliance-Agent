@@ -5,6 +5,7 @@ Generates remediation plan, customer response letter, and preventive recommendat
 from __future__ import annotations
 
 import json
+from src.utils.json_parser import extract_json
 import logging
 from datetime import datetime
 from typing import Any
@@ -64,14 +65,10 @@ def _call_resolution_llm(
         messages=[{"role": "user", "content": user_msg}],
     )
 
-    raw = response.content[0].text.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1].lstrip("json").strip()
-
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        # Graceful fallback: extract key sections from free-text response
+        return extract_json(response.content[0].text)
+    except (ValueError, Exception):
+        raw = response.content[0].text.strip()
         return {
             "immediate_actions": ["Review complaint", "Assign compliance officer", "Initiate investigation"],
             "owner": "Compliance Resolution Team",

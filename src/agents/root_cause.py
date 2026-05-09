@@ -5,6 +5,7 @@ Runs asynchronously against the rolling complaint corpus to surface systemic pat
 from __future__ import annotations
 
 import json
+from src.utils.json_parser import extract_json
 import logging
 from datetime import datetime
 from typing import Any
@@ -74,12 +75,7 @@ def _generate_causal_chain(
         messages=[{"role": "user", "content": user_msg}],
     )
 
-    raw = response.content[0].text.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    return json.loads(raw)
+    return extract_json(response.content[0].text)
 
 
 def run_root_cause(state: dict[str, Any]) -> dict[str, Any]:

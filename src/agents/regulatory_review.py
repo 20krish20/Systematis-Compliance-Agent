@@ -5,6 +5,7 @@ Returns responses below 80 to Resolution Agent with specific failure flags.
 from __future__ import annotations
 
 import json
+from src.utils.json_parser import extract_json
 import logging
 from datetime import datetime
 from typing import Any
@@ -50,15 +51,12 @@ def _call_review_llm(
 
     response = client.messages.create(
         model=cfg.primary_llm_model,
-        max_tokens=1024,
+        max_tokens=2048,
         system=REGULATORY_REVIEW_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_msg}],
     )
 
-    raw = response.content[0].text.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1].lstrip("json").strip()
-    return json.loads(raw)
+    return extract_json(response.content[0].text)
 
 
 def run_regulatory_review(state: dict[str, Any]) -> dict[str, Any]:

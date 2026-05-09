@@ -5,6 +5,7 @@ Calculates priority score and creates mock Jira/ServiceNow tickets.
 from __future__ import annotations
 
 import json
+from src.utils.json_parser import extract_json
 import logging
 import uuid
 from datetime import datetime, timedelta
@@ -104,26 +105,22 @@ def _llm_routing(masked_text: str, product: str, issue_type: str, severity: str)
     cfg = get_settings()
     client = anthropic.Anthropic(api_key=cfg.anthropic_api_key)
 
-    prompt = f"""You are a compliance routing specialist. Based on the complaint below, determine:
-1. Which team should handle it (one of: {', '.join([t.value for t in RoutingTeam])})
-2. The statutory basis for routing
-3. The routing rationale
+    prompt = f"""You are a compliance routing specialist. Return ONLY valid JSON, no prose or markdown.
 
 Complaint (masked): {masked_text[:2000]}
 Product: {product}, Issue: {issue_type}, Severity: {severity}
 
-Respond in JSON:
-{{"team": "<team>", "statutory_basis": "<statute>", "rationale": "<rationale>", "sla_days": <int>}}"""
+Choose the team from: {', '.join([t.value for t in RoutingTeam])}
+
+Return exactly:
+{{"team": "<team>", "statutory_basis": "<statute>", "rationale": "<one sentence>", "sla_days": <integer>}}"""
 
     response = client.messages.create(
         model=cfg.primary_llm_model,
-        max_tokens=256,
+        max_tokens=512,
         messages=[{"role": "user", "content": prompt}],
     )
-    raw = response.content[0].text.strip()
-    if raw.startswith("```"):
-        raw = raw.split("```")[1].lstrip("json").strip()
-    return json.loads(raw)
+    return extract_json(response.content[0].text)
 
 
 def _create_mock_jira_ticket(team: str, priority_score: float, complaint_id: str) -> str:

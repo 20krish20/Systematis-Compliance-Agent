@@ -13,6 +13,7 @@ import anthropic
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from prompts.compliance_risk import COMPLIANCE_RISK_SYSTEM_PROMPT, COMPLIANCE_RISK_USER_TEMPLATE
+from src.utils.json_parser import extract_json
 from src.classifier.distilbert_classifier import DistilBERTComplaintClassifier
 from src.config.settings import get_settings
 from src.pipeline.embeddings import EmbeddingPipeline
@@ -59,18 +60,12 @@ def _call_llm_for_risk(masked_text: str, product: str, issue_type: str, severity
 
     response = client.messages.create(
         model=cfg.primary_llm_model,
-        max_tokens=512,
+        max_tokens=1024,
         system=COMPLIANCE_RISK_SYSTEM_PROMPT,
         messages=[{"role": "user", "content": user_msg}],
     )
 
-    raw = response.content[0].text.strip()
-    # Strip markdown code fences if present
-    if raw.startswith("```"):
-        raw = raw.split("```")[1]
-        if raw.startswith("json"):
-            raw = raw[4:]
-    return json.loads(raw)
+    return extract_json(response.content[0].text)
 
 
 def run_classifier(state: dict[str, Any]) -> dict[str, Any]:
@@ -130,10 +125,17 @@ def run_classifier(state: dict[str, Any]) -> dict[str, Any]:
             ),
         )
 
+        # Escalate only on LLM-based confidence (severity + risk).
+        # DistilBERT product confidence is unreliable without fine-tuning
+        # and must not gate the full pipeline on its own.
+        # Only risk_conf comes from Claude — severity/product are heuristic/DistilBERT.
+        # Escalate only when the Claude risk assessment itself is uncertain.
+        needs_review = risk_conf < 0.72
+
         return {
             **state,
             "classification": classification,
-            "requires_human_review": classification.requires_human_review,
+            "requires_human_review": needs_review,
             "agent_steps": state.get("agent_steps", []) + [step],
             "last_agent": "classifier",
         }

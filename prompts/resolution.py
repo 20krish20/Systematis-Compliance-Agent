@@ -36,14 +36,16 @@ Root Cause Analysis:
 RAG Context (relevant regulatory excerpts):
 {rag_context}
 
-Generate a complete resolution plan with:
-1. Immediate remediation steps (with owner and timeline)
-2. Statutory basis for each action
-3. Customer response letter draft
-4. Preventive recommendations
-5. Regulatory citations
-
-Return as structured JSON matching the ResolutionPlan schema.
+Generate a complete resolution plan. Return ONLY valid JSON with exactly this structure (no markdown, no prose):
+{{
+  "immediate_actions": ["<action 1>", "<action 2>", "<action 3>"],
+  "owner": "<team responsible>",
+  "statutory_basis": "<primary statute and CFR citation>",
+  "customer_response_draft": "<full letter text acknowledging the complaint, steps taken, and resolution timeline>",
+  "preventive_recommendations": ["<recommendation 1>", "<recommendation 2>"],
+  "regulatory_citations": ["<citation 1>", "<citation 2>"],
+  "estimated_resolution_days": <integer>
+}}
 """
 
 CUSTOMER_RESPONSE_TEMPLATE = """
