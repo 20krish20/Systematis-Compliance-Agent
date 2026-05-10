@@ -1,235 +1,174 @@
 # Systematic Compliance Agent
-## Multi-Agent Fintech AI Pipeline
 
-A production-grade, multi-agent AI system that autonomously classifies, routes, investigates, and resolves consumer financial complaints at scale — with full explainability for regulatory audit trails.
+A multi-agent pipeline that takes a raw consumer financial complaint and hands back a regulatory-cited resolution draft, a Jira ticket, a fairness audit, and a complete decision trace — all without a human touching it unless the system genuinely isn't sure.
+
+Built on LangGraph, Anthropic Claude, and a fine-tuned DistilBERT classifier. Data source: [CFPB Consumer Complaint Database](https://www.consumerfinance.gov/data-research/consumer-complaints/).
 
 ---
 
-## Architecture Overview
+## What it does
+
+A complaint comes in over the API. Eight agents handle it in sequence:
+
+1. **Intake** — strips PII using spaCy NER followed by regex (spaCy runs first, on the original text, to avoid re-tagging placeholder tokens like `[SSN]`). Hashes the narrative for dedup.
+
+2. **Classifier** — DistilBERT predicts product category and issue type; Claude assesses severity and compliance risk level. If Claude's risk confidence falls below 0.72, the complaint goes straight to the human review queue rather than continuing. SHAP attributions are computed for the audit trail.
+
+3. **Root Cause** — embeds the complaint and finds the 10 nearest complaints in ChromaDB filtered by product. Runs a Z-score check against a rolling 30-day volume history to flag anomalies. Claude then generates a structured causal chain from the cluster.
+
+4. **Routing** — deterministic rules cover the common cases (e.g. credit card + billing → Credit Operations, Reg Z, 60-day SLA). Anything that doesn't match falls back to Claude. IMMINENT risk overrides all of this and escalates directly to Executive Escalation with a 1-day SLA.
+
+5. **Resolution** — RAG query against the regulatory knowledge base (Reg E, Reg Z, FCRA, ECOA, CFPB Circular 2022-06), then Claude drafts immediate actions, a customer response letter, and preventive recommendations. If this is a revision pass, the failed review's instructions are appended to the system prompt.
+
+6. **Regulatory Review** — Claude scores the resolution on five dimensions (factual accuracy, statutory citations, tone, completeness, timeliness representation) for a 0–100 total. Anything under 80 gets sent back to Resolution with specific failure flags. Maximum two revision attempts before it passes regardless.
+
+7. **Audit** — aggregates regulatory citations from every agent, deduped. Computes fairness metrics against FFIEC ZIP-code demographic proxies: demographic parity difference, equalized odds (TPR/FPR), disparate impact ratio (80% rule), and Gini coefficient. Persists everything to PostgreSQL.
+
+8. **Orchestrator** — LangGraph `StateGraph` wiring all of the above with conditional edges, failure recovery, and human escalation.
+
+---
+
+## Pipeline flow
 
 ```
-Consumer Complaint
-       │
-       ▼
-┌─────────────┐
-│ Intake Agent│  PII masking (spaCy NER + regex), deduplication (SHA-256), normalization
-└──────┬──────┘
-       │
-       ▼
-┌──────────────────┐
-│ Classifier Agent │  DistilBERT (product/issue) + Claude LLM (severity/compliance risk)
-│                  │  ChromaDB few-shot retrieval · SHAP feature attribution
-└──────┬───────────┘
-       │
-       ├── confidence < 0.72 ──► Human Review Queue
-       │
-       ▼
-┌────────────────────┐
-│ Root Cause Agent   │  HDBSCAN semantic clustering · Z-score anomaly detection
-│                    │  LLM causal chain generation (structured JSON)
-└──────┬─────────────┘
-       │
-       ▼
-┌──────────────┐
-│ Routing Agent│  Rule-based fast path + LLM fallback · Priority scoring
-│              │  Mock Jira/ServiceNow ticket creation · SLA deadline assignment
-└──────┬───────┘
-       │
-       ▼
-┌────────────────────┐
-│ Resolution Agent   │  ReAct + RAG over regulatory corpus (Reg E/Z, FCRA, ECOA)
-│                    │  Customer response draft · Preventive recommendations
-└──────┬─────────────┘
-       │
-       ▼
-┌────────────────────────┐
-│ Regulatory Review Agent│  LLM-as-judge (5-dimension rubric · 0-100 score)
-│                        │  Score < 80 → return to Resolution Agent (max 2 revisions)
-└──────┬─────────────────┘
-       │
-       ▼
-┌────────────────────────┐
-│ Audit & Explainability │  Full decision trace · SHAP attributions · Regulatory citations
-│ Agent                  │  Fairness metrics (Gini, disparate impact, equalized odds)
-│                        │  PostgreSQL persistence · LangSmith tracing
-└────────────────────────┘
+Complaint ──► Intake ──► Classifier ──┬──► Human Review ──► Audit
+                                      │
+                                      └──► Root Cause ──► Routing ──► Resolution ──► Regulatory Review ──┬──► Audit
+                                                                              ▲                          │
+                                                                              └──── score < 80 (max 2x) ─┘
 ```
 
-**Orchestration**: LangGraph StateGraph with conditional edges, interrupt handlers, and automatic human escalation
+---
+
+## Compliance risk levels
+
+| Level | Trigger | What happens |
+|-------|---------|--------------|
+| NONE | No apparent regulatory touch | Standard resolution |
+| ADVISORY | Touches a regulated product/process | Document thoroughly |
+| MODERATE | Potential policy violation | Escalate within 48 hours |
+| ELEVATED | Apparent regulatory violation | Compliance team, 24 hours |
+| IMMINENT | Active violation with consumer harm | Overrides routing to Executive Escalation, 1-day SLA |
 
 ---
 
-## Success Criteria
+## Tech stack
 
-| Metric | Baseline | Target |
-|--------|----------|--------|
-| Classification accuracy | ~58% | **> 90%** |
-| Time to route | 3-5 days | **< 15 minutes** |
-| Regulatory response score | Undefined | **> 85/100** |
-| Root cause identification | ~20% | **> 75%** |
-| Fairness disparity (Gini) | Unmeasured | **< 0.05** |
-| Human escalation rate | 100% | **< 12%** |
-| Throughput | ~20/hr | **> 1,000/hr** |
-
----
-
-## Tech Stack
-
-| Layer | Technology |
-|-------|-----------|
-| Agent Orchestration | LangGraph StateGraph |
-| LLM | Anthropic Claude (primary) · GPT-4o (fallback) |
-| ML Classification | HuggingFace DistilBERT (fine-tuned) |
-| Vector Store | ChromaDB (persistent, HNSW index) |
-| Embeddings | OpenAI text-embedding-3-small |
-| API | FastAPI + Pydantic v2 + Uvicorn |
-| Task Queue | Celery + Redis |
-| Stream Ingestion | Apache Kafka |
+| Layer | What's used |
+|-------|-------------|
+| Agent orchestration | LangGraph `StateGraph` |
+| LLM | Claude (primary), GPT-4o (fallback) |
+| Classification | DistilBERT fine-tuned on CFPB data + SHAP |
+| Vector store | ChromaDB (HNSW index) |
+| Embeddings | OpenAI `text-embedding-3-small` |
+| API | FastAPI + Pydantic v2 |
+| Task queue | Celery + Redis |
+| Stream ingestion | Apache Kafka |
 | Databases | PostgreSQL + Redis |
-| Observability | LangSmith + Prometheus + Grafana |
-| Experiment Tracking | MLflow |
-| Fairness | SHAP + custom Gini module |
-| PII Masking | spaCy en_core_web_lg + regex |
+| Observability | LangSmith, Prometheus, Grafana |
+| Experiment tracking | MLflow |
+| PII masking | spaCy `en_core_web_lg` + regex |
 | Containerization | Docker Compose |
-| Testing | pytest + Locust |
+| Testing | pytest (unit + integration), Locust (load) |
 
 ---
 
-## Quick Start
+## Quick start
 
-### Prerequisites
-- Docker + Docker Compose
-- Python 3.11+
-- Anthropic API key
-- OpenAI API key (for embeddings)
-
-### 1. Environment Setup
+**Prerequisites:** Docker + Compose, Python 3.11+, Anthropic API key, OpenAI API key (embeddings)
 
 ```bash
+# 1. Setup
 make setup
 cp .env.example .env
-# Edit .env with your API keys
-```
+# add your API keys to .env
 
-### 2. Start Infrastructure
-
-```bash
+# 2. Start infrastructure (Postgres, Redis, Kafka, ChromaDB, MLflow, Prometheus, Grafana)
 make up
-# Services: Postgres, Redis, Kafka, ChromaDB, MLflow, Prometheus, Grafana
+
+# 3. Load data
+# Download complaints.csv from consumerfinance.gov → data/cfpb_raw/complaints.csv
+make ingest    # PII mask + normalize, 50K sample by default
+make embed     # Build ChromaDB vector stores
+make golden    # Generate 500-complaint golden evaluation set
+
+# 4. Run the API
+make api-dev   # http://localhost:8000/docs
 ```
 
-### 3. Initialize Data Pipeline
-
-```bash
-# Download CFPB data from consumerfinance.gov → data/cfpb_raw/complaints.csv
-make ingest          # Ingest + PII mask + normalize (50K sample by default)
-make embed           # Build ChromaDB vector stores
-make golden          # Generate 500-complaint golden evaluation set
-```
-
-### 4. Run API
-
-```bash
-make api-dev         # Development server with hot reload
-# Swagger UI: http://localhost:8000/docs
-```
-
-### 5. Submit a Complaint (Demo)
+**Send a complaint:**
 
 ```bash
 curl -X POST http://localhost:8000/api/v1/complaints/process \
   -H "Content-Type: application/json" \
   -d '{
-    "narrative": "I have an unauthorized charge on my credit card that has been disputed for 75 days with no resolution. The bank is still charging interest on the disputed amount and has reported it as delinquent to credit bureaus.",
+    "narrative": "I have an unauthorized charge on my credit card disputed for 75 days with no resolution. The bank is still charging interest on the disputed amount and reported it as delinquent to credit bureaus.",
     "state": "CA",
     "zip_code": "90001",
     "submitted_via": "Web"
   }'
 ```
 
-### 6. Run Tests
+**Tests:**
 
 ```bash
-make test-unit         # Unit tests (no external dependencies)
-make test-integration  # Integration tests (requires API keys + services)
-make test-load         # Locust load test (1,000+ complaints/hr benchmark)
+make test-unit         # no external dependencies
+make test-integration  # requires API keys + running services
+make test-load         # Locust, 1,000+ complaints/hr benchmark
 ```
 
 ---
 
 ## Dashboards
 
-| Dashboard | URL |
-|-----------|-----|
-| API Swagger UI | http://localhost:8000/docs |
-| Grafana Pipeline Health | http://localhost:3000 (admin/admin) |
-| Prometheus Metrics | http://localhost:9090 |
-| MLflow Experiments | http://localhost:5000 |
+| | URL |
+|--|-----|
+| API | http://localhost:8000/docs |
+| Grafana | http://localhost:3000 (admin/admin) |
+| Prometheus | http://localhost:9090 |
+| MLflow | http://localhost:5000 |
 
 ---
 
-## Project Structure
+## Project layout
 
 ```
-├── src/
-│   ├── agents/          # 8 specialized agents (intake, classifier, root_cause, routing,
-│   │                    #   resolution, regulatory_review, audit, orchestrator)
-│   ├── pipeline/        # Data ingestion, PII masking, embeddings, Kafka consumer
-│   ├── rag/             # Regulatory knowledge base (ChromaDB-backed)
-│   ├── classifier/      # DistilBERT fine-tuning + SHAP inference
-│   ├── fairness/        # Gini, disparate impact, equalized odds monitoring
-│   ├── api/             # FastAPI routes (complaints, audit)
-│   ├── tasks/           # Celery async task queue
-│   ├── observability/   # Prometheus metrics
-│   └── config/          # Pydantic settings
-├── prompts/             # Version-controlled LLM prompt templates
-├── scripts/             # Data pipeline CLI scripts
-├── tests/               # Unit, integration, load tests
-├── monitoring/          # Prometheus config + Grafana dashboards
-└── docker-compose.yml   # Full local deployment
+src/
+├── agents/          # orchestrator + 7 agents
+├── pipeline/        # data ingestion, PII masking, embeddings, Kafka consumer
+├── rag/             # regulatory knowledge base (ChromaDB)
+├── classifier/      # DistilBERT training + SHAP inference
+├── fairness/        # FairnessMonitor: Gini, disparate impact, equalized odds
+├── api/             # FastAPI routes
+├── tasks/           # Celery workers
+├── observability/   # Prometheus metrics
+└── config/          # Pydantic settings
+
+prompts/             # version-controlled prompt templates
+scripts/             # data pipeline CLIs
+tests/               # unit, integration, load
+monitoring/          # Prometheus config, Grafana dashboards
+docker-compose.yml
 ```
 
 ---
 
-## Regulatory Coverage
+## Regulatory coverage
 
-The RAG knowledge base covers:
-- **CFPB Supervision and Examination Manual** — Complaint management program requirements
-- **Regulation Z** (12 CFR Part 1026) — Credit card billing dispute timelines (60-90 days)
+The RAG knowledge base includes:
+
+- **CFPB Supervision and Examination Manual** — complaint management program requirements
+- **Regulation Z** (12 CFR Part 1026) — credit card billing dispute timelines (60–90 days)
 - **Regulation E** (12 CFR Part 1005) — EFT dispute obligations (10/45 days)
-- **FCRA** (15 U.S.C. 1681) — Credit dispute investigation requirements (30/45 days)
-- **ECOA / Regulation B** — Non-discrimination, adverse action notice obligations
+- **FCRA** (15 U.S.C. 1681) — credit dispute investigation requirements (30/45 days)
+- **ECOA / Regulation B** — non-discrimination, adverse action notice obligations
 - **CFPB Circular 2022-06** — UDAAP enforcement guidance
 
 ---
 
-## Compliance Risk Levels
-
-| Level | Description | Action |
-|-------|-------------|--------|
-| NONE | No regulatory implications | Standard resolution |
-| ADVISORY | Touches regulated activity, no apparent violation | Document thoroughly |
-| MODERATE | Potential policy violation | Escalate within 48 hours |
-| ELEVATED | Apparent regulatory violation | Escalate to Compliance in 24 hours |
-| IMMINENT | Active violation with consumer harm | Immediate escalation |
-
----
-
-## Fairness Monitoring
-
-The Audit Agent computes fairness metrics using FFIEC ZIP-code demographic proxies:
-
-- **Demographic Parity Difference** (threshold: < 0.05)
-- **Equalized Odds** TPR/FPR parity (max diff: < 0.05)
-- **Disparate Impact Ratio** using the 80% rule (threshold: > 0.80)
-- **Gini Coefficient** of resolution outcomes (threshold: < 0.05)
-
----
-
-## Fine-Tuning the Classifier
+## Fine-tuning the classifier
 
 ```bash
-# After ingestion and before evaluation:
 python -c "
 from src.classifier.train import train
 train(
@@ -239,31 +178,31 @@ train(
     batch_size=32,
 )
 "
-# Results logged to MLflow at http://localhost:5000
+# tracked in MLflow at http://localhost:5000
 ```
 
 ---
 
-## Operating Principles
+## A few design decisions worth knowing
 
-- **No raw PII in logs**: All narrative data masked before any LLM or storage operation
-- **Prompt versioning**: Every prompt template in `prompts/` is treated as code (git-tracked)
-- **Human escalation is a feature**: The system surfaces its own uncertainty
-- **Fallback at every layer**: Each agent has defined fallback behavior for failures
-- **Audit by default**: Every pipeline run produces a regulator-ready audit trail
-- **Cost management**: ~0.3-0.7M input tokens per 10K complaints; token budgets enforced per complaint
+**PII masking order matters.** spaCy runs on the original text first. If regex ran first and replaced `John Smith` with `[PERSON]`, spaCy would then tag `[PERSON]` as an entity and produce a double-masked mess. The current order avoids that.
 
----
+**Human escalation is based on Claude's confidence, not DistilBERT's.** DistilBERT product confidence is unreliable without fine-tuning and varies a lot on out-of-distribution text. The 0.72 threshold only fires when Claude's own risk assessment is uncertain — meaning the escalation is anchored to the compliance judgment, not the label prediction.
 
-## Week-by-Week Roadmap
+**The regulatory review loop has a hard cap.** Resolutions that fail twice go to audit regardless of score. Without the cap, a complaint with genuinely ambiguous regulatory fit would loop indefinitely. Two revision attempts is enough to catch formatting and citation issues; if it still fails after that, human review is the right answer.
 
-| Week | Focus |
-|------|-------|
-| 1 | Foundation: Docker, Kafka, PII pipeline, DistilBERT v1, LangGraph scaffold |
-| 2 | Core agents: Root cause, routing, resolution, regulatory review |
-| 3 | Scale: Celery workers, HNSW tuning, SHAP, fairness module, Grafana |
-| 4 | Evaluation: Golden set, ablation study, regulator audit trails, demo |
+**IMMINENT risk overrides everything.** When the classifier returns `ComplianceRiskLevel.IMMINENT`, the routing agent ignores all deterministic rules and LLM output and directly assigns `EXECUTIVE_ESCALATION` with a 1-day SLA. This is a hard-coded override, not a routing rule.
 
 ---
 
-*Systematic Compliance Agent | R&D Competition | Senior AI Engineer, Financial Services*
+## Targets
+
+| Metric | Baseline (manual process) | Target |
+|--------|--------------------------|--------|
+| Classification accuracy | ~58% | > 90% |
+| Time to route | 3–5 days | < 15 minutes |
+| Regulatory response score | undefined | > 85/100 |
+| Root cause identification | ~20% | > 75% |
+| Fairness disparity (Gini) | unmeasured | < 0.05 |
+| Human escalation rate | 100% | < 12% |
+| Throughput | ~20/hr | > 1,000/hr |
