@@ -6,6 +6,17 @@ Built on LangGraph, Anthropic Claude, and a fine-tuned DistilBERT classifier. Da
 
 ---
 
+
+## Architecture Diagram
+
+<h2>Architecture Diagram</h2>
+
+<p align="center">
+  <img src="images/architecture.png" width="900"/>
+</p>
+
+---
+
 ## What it does
 
 A complaint comes in over the API. Eight agents handle it in sequence:
