@@ -9,7 +9,7 @@ Built on LangGraph, Anthropic Claude, and a fine-tuned DistilBERT classifier. Da
 
 ## Architecture Diagram
 
-![Architecture Diagram](images/architecture.png)
+![Architecture Diagram](images/diagram-export-5-9-2026-8_39_39-PM.png)
 
 ---
 
